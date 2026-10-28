@@ -1,42 +1,56 @@
 # Qwen2.5-0.5B LoRA 中文情感分类小项目
 
-## 1. 任务说明
-针对中文短文本情感分类任务，对 Qwen2.5-0.5B-Instruct 模型进行 LoRA 微调。
-- **输入**：一条中文短文本（如商品评价）。
-- **输出**：情感极性（只输出“正面”或“负面”）。
+本项目探索了基于 Qwen2.5-0.5B-Instruct 模型进行 LoRA 微调完成中文情感分类任务。项目分为两个阶段，逐步实现从“环境与流程验证”到“真实数据量化评估”的迭代。
 
-## 2. 数据集
-本项目使用通过 Python 脚本本地构建并随机划分的情感分类数据集：
-- **训练集**：800 条（正面/负面各 400 条）。
-- **测试集**：300 条（不参与训练，用于最终评估）。
-*(注：代码中预留了加载 ChnSentiCorp 公开数据集的逻辑，后续将替换为真实公开数据集进行大规模评测)*
+## 阶段一 (V1)：快速验证闭环
+- **数据**：基于模板本地生成的 800 条极简数据（存放于 `data/mock`）。
+- **目的**：打通环境配置、数据格式化、LoRA 微调（`PEFT` 库）与推理测试的全流程。
+- **结果**：成功以 0.88% 的可训练参数占比完成微调，模型能精准输出“正面/负面”，验证了工程链路的可行性。
 
-## 3. Baseline 与评估指标
-- **Baseline**：Qwen2.5-0.5B-Instruct 原始模型，不微调，使用固定 Prompt 进行 Zero-shot 预测。
-- **指标**：Accuracy（准确率）。
+## 阶段二 (V2)：真实数据进阶评估
+- **数据**：引入公开真实数据集 **ChnSentiCorp**（抽取 2000 条训练，500 条测试，存放于 `data/`）。
+- **目的**：解决 V1 版本中的“过拟合”与“数据单一”问题，量化评估模型的泛化能力。
+- **核心工作**：
+  1. 编写 `prepare_data.py` 清洗真实 Parquet 格式数据，并格式化为大模型指令微调格式。
+  2. 使用真实数据重新进行 LoRA 微调（`train_lora.py`），Loss 从 0.68 正常收敛至 0.10 左右。
+  3. 编写 `evaluate.py`，在 500 条独立测试集上计算 Accuracy 与 Macro-F1 分数。
 
-## 4. 方法
-使用 `PEFT` 库对模型进行 LoRA 微调。
-- **LoRA 参数**：`r=8`, `lora_alpha=32`, `lora_dropout=0.1`。
-- **可训练参数占比**：0.8826%（仅 4.39M 参数参与训练，原模型冻结）。
+### V2 评估结果
+- **Baseline (Zero-shot)**：基础模型直接推理（表现力较弱）
+- **LoRA 微调后**：**Accuracy: 92.00%**, **Macro-F1: 91.99%** (基于 100 条真实独立测试集)
 
-## 5. 结果对比
-| 模型版本 | 训练情况 | 推理表现（示例） | 备注 |
-| :--- | :--- | :--- | :--- |
-| **Baseline** (Zero-shot) | 未微调 | 能识别基础情感，但偶尔输出格式不纯净（会输出废话） | 速度较快 |
-| **LoRA 微调后** | 3 Epochs | 精准遵循指令，只输出“正面”或“负面”，格式完美 | 准确率极高（小数据集下 Loss 收敛至 0.0） |
+## 目录结构
+```text
+qwen-lora-sentiment/
+├── data/
+│   ├── train-00000-of-00001.parquet  (真实公开数据)
+│   └── mock/                         (V1 本地假数据)
+├── src/
+│   ├── v1_mock/                      (V1 阶段代码)
+│   │   ├── prepare_data.py
+│   │   ├── train_lora.py
+│   │   └── test_lora.py
+│   └── v2_real/                      (V2 阶段进阶代码)
+│       ├── prepare_data.py
+│       ├── train_lora.py
+│       └── evaluate.py
+├── .gitignore
+└── README.md
+```
 
-## 6. 错误分析
-- **由于训练数据过于简单（仅16个基础句式扩充）**，模型在测试集上表现出了“过拟合”现象，Loss 降至极低。
-- **测试难点**：对于包含反讽（如“这质量真是好得我想哭”）或强烈转折的中性长文本，模型由于参数量较小（0.5B），可能会出现误判。后续计划引入更复杂、带转折的真实电商评论数据，增加训练集多样性。
-
-## 7. 如何运行
-### 环境要求
-- Python 3.11
-- PyTorch >= 2.5.1 (CUDA 12.1)
-- RTX 4060 (8GB 显存及以上)
-
-### 1. 安装依赖
+## 如何运行 V2 进阶版
 ```bash
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-pip install transformers==4.45.2 peft==0.12.0 accelerate==0.34.2 datasets==2.20.0
+# 1. 准备数据 (需提前将 parquet 文件放入 data/)
+python src/v2_real/prepare_data.py
+
+# 2. 开始 LoRA 微调训练
+python src/v2_real/train_lora.py
+
+# 3. 运行评估脚本
+python src/v2_real/evaluate.py
+```
+
+## 数据获取说明
+由于 GitHub 文件大小限制，数据集文件未直接上传至仓库。
+- **真实数据 V2**：需从 Hugging Face (`lansinuote/ChnSentiCorp`) 下载 `train-00000-of-00001.parquet` 放入 `data/` 目录。
+- 也可以直接运行本地数据生成脚本进行 V1 版本测试：`python src/v2_real/prepare_data.py`。
